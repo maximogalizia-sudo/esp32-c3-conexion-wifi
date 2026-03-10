@@ -7,8 +7,12 @@
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
+#define TIME_TO_SLEEP  30        // Segundos de Deep Sleep 
+#define uS_TO_S_FACTOR 1000000ULL
+
 BLECharacteristic *pCharacteristic;
 bool deviceConnected = false;
+bool dataSent = false;
 
 // Callbacks para gestionar el estado de la conexión
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -22,6 +26,15 @@ class MyServerCallbacks: public BLEServerCallbacks {
       pServer->getAdvertising()->start();
     }
 };
+
+void goToDeepSleep() {
+  Serial.println("Entrando en Deep Sleep...");
+  Serial.flush(); // Espera a que termine de imprimir en consola antes de apagar
+  
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_deep_sleep_start();
+}
+
 
 void setup() {
   Serial.begin(115200);
@@ -54,20 +67,43 @@ void setup() {
   pAdvertising->start();
 
   Serial.println("Esperando que el cliente BLE se conecte...");
+// 3. VENTANA DE ESCUCHA Y TRABAJO
+  unsigned long startTime = millis();
+  
+
+  while (millis() - startTime < 30000) {
+    
+    if (deviceConnected && !dataSent) {
+  Serial.println("¡Conexión detectada! Esperando 2 segundos para que el celular se acomode...");
+      delay(2000); // PAUSA 1: Le damos tiempo a la app para descubrir los servicios
+
+      float humedad = 42.5; 
+      char strHumedad[8];
+      dtostrf(humedad, 1, 2, strHumedad);
+      
+      pCharacteristic->setValue(strHumedad);
+      pCharacteristic->notify(); 
+      
+      Serial.printf("Enviando humedad: %s%%\n", strHumedad);
+      dataSent = true; // Marcamos que ya enviamos
+      
+      delay(2000); // Le damos 1 segundo al chip de radio para enviar el paquete físico
+      break;       // Rompemos el ciclo 'while' para irnos a dormir temprano
+    }
+    
+    delay(10); // Pequeño respiro para que el procesador no colapse
+  }
+
+  // 4. VERIFICACIÓN Y SUEÑO
+  if (!dataSent) {
+    Serial.println("Nadie se conectó a tiempo. Abortando envío para ahorrar energía.");
+  }
+
+  // Se apaga todo (CPU, Bluetooth, Wi-Fi). El código termina acá.
+  goToDeepSleep();
+  
 }
 
 void loop() {
-  if (deviceConnected) {
-    // Simulamos la lectura de humedad
-    float humedad = 42.5; 
-    
-    char strHumedad[8];
-    dtostrf(humedad, 1, 2, strHumedad);
-    
-    pCharacteristic->setValue(strHumedad);
-    pCharacteristic->notify(); // Notificamos el cambio al Gateway
-    
-    Serial.printf("Enviando humedad simulada: %s%%\n", strHumedad);
-    delay(5000); 
-  }
+  
 }
