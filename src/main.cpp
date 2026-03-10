@@ -1,35 +1,73 @@
-#include <Arduino.h>  //librerias de arduino
-#include <WiFi.h>   //La librería oficial para manejar el stack de red del ESP32.
+#include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 
-const char* ssid = "TU_RED";     // Puntero a una cadena de caracteres con el nombre del Wi-Fi.
-const char* password = "TU_PASS"; // Contraseña de la red.
+// UUIDs para el servicio y la característica
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+BLECharacteristic *pCharacteristic;
+bool deviceConnected = false;
+
+// Callbacks para gestionar el estado de la conexión
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("¡Dispositivo conectado!");
+    };
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("Dispositivo desconectado. Reiniciando anuncios...");
+      pServer->getAdvertising()->start();
+    }
+};
 
 void setup() {
-  Serial.begin(115200); // Inicia el puerto serie.
-  delay(2000);          // Delay de cortesía para que el USB CDC de la PC se estabilice.
+  Serial.begin(115200);
+  delay(2000); 
 
-  WiFi.mode(WIFI_STA);  // Configura el chip como "Station". 
-                        // El ESP32 puede ser AP (crear red) o STA (conectarse a una).
-  
-  WiFi.begin(ssid, password); // Intenta el "handshake" con el router/gateway.
+  Serial.println("Iniciando Servidor BLE...");
 
-  // Este es un bucle de bloqueo positivo
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print("."); // Imprime puntos hasta que el estado cambie a "WL_CONNECTED".
-  }
+  // 1. Inicializar BLE
+  BLEDevice::init("Maceta_Nodo_C3");
 
-  Serial.println(WiFi.localIP()); // Una vez conectado, el router nos da una IP local.
+  // 2. Crear el Servidor y asignar Callbacks
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // 3. Crear el Servicio
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // 4. Crear la Característica (Lectura y Notificación)
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ |
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+
+  // 5. Iniciar Servicio y Anuncios
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->start();
+
+  Serial.println("Esperando que el cliente BLE se conecte...");
 }
 
 void loop() {
-  // Verificación de persistencia de red
-  if (WiFi.status() != WL_CONNECTED) {
-    // Si el router se apaga o hay interferencia, entramos aquí.
-    Serial.println("Reconectando...");
-    WiFi.disconnect(); // Limpiamos el estado previo.
-    WiFi.reconnect();  // Intentamos reenganchar la sesión.
+  if (deviceConnected) {
+    // Simulamos la lectura de humedad
+    float humedad = 42.5; 
     
-    delay(5000); // Esperamos 5 segundos antes de reintentar para no bloquear el procesador.
+    char strHumedad[8];
+    dtostrf(humedad, 1, 2, strHumedad);
+    
+    pCharacteristic->setValue(strHumedad);
+    pCharacteristic->notify(); // Notificamos el cambio al Gateway
+    
+    Serial.printf("Enviando humedad simulada: %s%%\n", strHumedad);
+    delay(5000); 
   }
 }
